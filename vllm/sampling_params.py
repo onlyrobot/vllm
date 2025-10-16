@@ -117,6 +117,8 @@ class RequestOutputKind(Enum):
     DELTA = 1
     # Do not return intermediate RequestOutput
     FINAL_ONLY = 2
+    # Return raw output for beam search
+    RAW = 3
 
 
 class SamplingParams(
@@ -596,3 +598,4 @@ class BeamSearchParams(
     temperature: float = 0.0
     length_penalty: float = 1.0
     include_stop_str_in_output: bool = False
+    get_allowed_token_ids: Any = None

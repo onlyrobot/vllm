@@ -11,7 +11,7 @@ from vllm.transformers_utils.tokenizer import AnyTokenizer
 from vllm.transformers_utils.tokenizer_group import TokenizerGroup
 from vllm.v1.engine import EngineCoreOutput, EngineCoreRequest, FinishReason
 from vllm.v1.engine.detokenizer import IncrementalDetokenizer
-from vllm.v1.engine.logprobs import LogprobsProcessor
+from vllm.v1.engine.logprobs import LogprobsProcessor, Logprob, SampleLogprobs
 from vllm.v1.engine.parallel_sampling import ParentRequest
 from vllm.v1.metrics.stats import (IterationStats, LoRARequestStates,
                                    RequestStateStats)
@@ -117,6 +117,7 @@ class RequestState:
     ) -> "RequestState":
         if not request.sampling_params.detokenize:
             tokenizer = None
+        raw_output = request.sampling_params.output_kind == RequestOutputKind.RAW
         return cls(
             request_id=request.request_id,
             parent_req=parent_req,
@@ -126,11 +127,11 @@ class RequestState:
             output_kind=request.sampling_params.output_kind,
             prompt=prompt,
             prompt_token_ids=request.prompt_token_ids,
-            logprobs_processor=LogprobsProcessor.from_new_request(
+            logprobs_processor=None if raw_output else LogprobsProcessor.from_new_request(
                 tokenizer=tokenizer,
                 request=request,
             ),
-            detokenizer=IncrementalDetokenizer.from_new_request(
+            detokenizer=None if raw_output else IncrementalDetokenizer.from_new_request(
                 tokenizer=tokenizer,
                 request=request,
             ),
@@ -176,7 +177,9 @@ class RequestState:
         finished: bool,
     ) -> RequestOutput:
 
-        if self.output_kind == RequestOutputKind.DELTA:
+        if self.output_kind == RequestOutputKind.RAW: 
+            prompt_logprobs = None
+        elif self.output_kind == RequestOutputKind.DELTA:
             # Side effect: logprobs processor forgets prompt logprobs
             prompt_logprobs = self.logprobs_processor.pop_prompt_logprobs()
         else:
@@ -201,22 +204,33 @@ class RequestState:
         finished = finish_reason is not None
         delta = self.output_kind == RequestOutputKind.DELTA
 
-        # Prepare text and token_ids, based on delta mode
-        text = self.detokenizer.get_next_output_text(finished, delta)
-        if not delta:
-            token_ids = self.detokenizer.output_token_ids
+        if self.output_kind == RequestOutputKind.RAW:
+            text = ""
+            cumulative_logprob = None
+            logprobs: SampleLogprobs = self.new_logprobs
+            # logprobs: SampleLogprobs = [
+            #     {token_id: Logprob(logprob=logprob)
+            #     for token_id, logprob in zip(token_ids, probs)}
+            #     for token_ids, probs, _ in zip(*self.new_logprobs)]
+        else:
+            # Prepare text and token_ids, based on delta mode
+            text = self.detokenizer.get_next_output_text(finished, delta)
+            if not delta:
+                token_ids = self.detokenizer.output_token_ids
 
-        # Prepare logprobs, based on delta mode
-        logprobs = self.logprobs_processor.logprobs
-        if delta and logprobs:
-            logprobs = logprobs[-len(token_ids):]
+            # Prepare logprobs, based on delta mode
+            logprobs = self.logprobs_processor.logprobs
+            if delta and logprobs:
+                logprobs = logprobs[-len(token_ids):]
+
+            cumulative_logprob=self.logprobs_processor.cumulative_logprob
 
         return CompletionOutput(
             index=self.request_index,
             text=text,
             token_ids=token_ids,
             logprobs=logprobs,
-            cumulative_logprob=self.logprobs_processor.cumulative_logprob,
+            cumulative_logprob=cumulative_logprob,
             finish_reason=str(finish_reason) if finished else None,
             stop_reason=stop_reason if finished else None)
 
@@ -340,15 +354,18 @@ class OutputProcessor:
 
             req_state.is_prefilling = False
 
-            # 2) Detokenize the token ids into text and perform stop checks.
-            stop_string = req_state.detokenizer.update(
-                new_token_ids, finish_reason == FinishReason.STOP)
-            if stop_string:
-                finish_reason = FinishReason.STOP
-                stop_reason = stop_string
 
-            # 3) Compute sample and prompt logprobs for request, if required.
-            req_state.logprobs_processor.update_from_output(engine_core_output)
+            if req_state.output_kind != RequestOutputKind.RAW:
+                # 2) Detokenize the token ids into text and perform stop checks.
+                stop_string = req_state.detokenizer.update(
+                    new_token_ids, finish_reason == FinishReason.STOP)
+                if stop_string:
+                    finish_reason = FinishReason.STOP
+                    stop_reason = stop_string
+
+                # 3) Compute sample and prompt logprobs for request, if required.
+                req_state.logprobs_processor.update_from_output(engine_core_output)
+            else: req_state.new_logprobs = engine_core_output.new_logprobs
 
             # 4) Create and handle RequestOutput objects.
             if request_output := req_state.make_request_output(

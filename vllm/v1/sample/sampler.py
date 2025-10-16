@@ -24,6 +24,7 @@ class Sampler(nn.Module):
         self,
         logits: torch.Tensor,
         sampling_metadata: SamplingMetadata,
+        return_raw_logprobs: bool = False,
     ) -> SamplerOutput:
         # NOTE(woosuk): Use the original logits (before any penalties or
         # temperature scaling) for the top-k logprobs.
@@ -32,7 +33,7 @@ class Sampler(nn.Module):
         # TODO(rob): provide option for logprobs post sampling.
         # See https://vllm-dev.slack.com/archives/C07UUL8E61Z/p1735907856007919 # noqa: E501
         num_logprobs = sampling_metadata.max_num_logprobs
-        if num_logprobs is not None:
+        if num_logprobs is not None and return_raw_logprobs:
             raw_logprobs = self.compute_logprobs(logits)
 
         # Use float32 for the logits.
@@ -53,6 +54,8 @@ class Sampler(nn.Module):
         # return int32 (while PyTorch argmax and topk return int64).
         sampled = sampled.long()
 
+        if num_logprobs is not None and not return_raw_logprobs:
+            raw_logprobs = self.compute_logprobs(logits)
         # Gather the logprobs of the topk and sampled token (if requested).
         # Get logprobs and rank tensors (if requested)
         logprobs_tensors = None if num_logprobs is None else \

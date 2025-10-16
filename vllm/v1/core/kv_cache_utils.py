@@ -421,7 +421,9 @@ def hash_block_tokens(
 
 
 def hash_request_tokens(hash_function: Any, block_size: int,
-                        request: Request) -> list[BlockHashType]:
+                        request: Request, 
+                        last_parent_block_hash_value: Optional[int] = None
+                        ) -> list[BlockHashType]:
     """Computes hash values of a chain of blocks given a sequence of
     token IDs. The hash value is used for prefix caching.
 
@@ -439,8 +441,13 @@ def hash_request_tokens(hash_function: Any, block_size: int,
     curr_mm_idx = 0
 
     ret = []
-    parent_block_hash_value = None
-    for start in range(0, len(token_ids), block_size):
+    parent_block_hash_value = last_parent_block_hash_value
+    start = 0
+    if last_parent_block_hash_value is not None:
+        start = len(token_ids) // block_size * block_size
+        if start == len(token_ids) and start != 0:
+            start -= block_size
+    for start in range(start, len(token_ids), block_size):
         end = start + block_size
         block_token_ids = token_ids[start:end]
         # Do not hash the block if it is not full.

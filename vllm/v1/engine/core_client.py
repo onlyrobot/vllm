@@ -20,7 +20,8 @@ from vllm.logger import init_logger
 from vllm.lora.request import LoRARequest
 from vllm.utils import (get_open_zmq_inproc_path, get_open_zmq_ipc_path,
                         make_zmq_socket)
-from vllm.v1.engine import (EngineCoreOutputs, EngineCoreRequest,
+from vllm.v1.engine import (EngineCoreOutputs, EngineCoreRequest, 
+                            BatchEngineCoreRequest,
                             EngineCoreRequestType, UtilityOutput)
 from vllm.v1.engine.core import EngineCore, EngineCoreProc
 from vllm.v1.engine.exceptions import EngineDeadError
@@ -136,7 +137,7 @@ class EngineCoreClient(ABC):
     async def get_output_async(self) -> EngineCoreOutputs:
         raise NotImplementedError
 
-    async def add_request_async(self, request: EngineCoreRequest) -> None:
+    async def add_requests_async(self, requests: list[EngineCoreRequest]) -> None:
         raise NotImplementedError
 
     async def profile_async(self, is_start: bool = True) -> None:
@@ -768,8 +769,9 @@ class AsyncMPClient(MPClient):
         self._ensure_output_queue_task()
         return await future
 
-    async def add_request_async(self, request: EngineCoreRequest) -> None:
-        await self._send_input(EngineCoreRequestType.ADD, request)
+    async def add_requests_async(self, requests: list[EngineCoreRequest]) -> None:
+        requests = BatchEngineCoreRequest(requests=requests)
+        await self._send_input(EngineCoreRequestType.BATCH_ADD, requests)
         self._ensure_output_queue_task()
 
     async def abort_requests_async(self, request_ids: list[str]) -> None:
@@ -860,14 +862,17 @@ class DPAsyncMPClient(AsyncMPClient):
             for engine in self.core_engines
         ]))[0]
 
-    async def add_request_async(self, request: EngineCoreRequest) -> None:
-        request.current_wave = self.current_wave
-
+    async def add_requests_async(self, requests: list[EngineCoreRequest]) -> None:
         chosen_engine = self.get_core_engine_for_request()
-        self.reqs_in_flight[request.request_id] = chosen_engine
-        chosen_engine.num_reqs_in_flight += 1
+        for request in requests:
+            request.current_wave = self.current_wave
 
-        to_await = self._send_input(EngineCoreRequestType.ADD, request,
+            self.reqs_in_flight[request.request_id] = chosen_engine
+            chosen_engine.num_reqs_in_flight += 1
+
+        requests = BatchEngineCoreRequest(requests=requests)
+
+        to_await = self._send_input(EngineCoreRequestType.BATCH_ADD, requests,
                                     chosen_engine)
         if not self.engines_running:
             # Send request to chosen engine and dp start loop

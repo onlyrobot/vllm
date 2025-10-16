@@ -64,6 +64,14 @@ class EngineCoreRequest(
     current_wave: int = 0
 
 
+class BatchEngineCoreRequest(
+        msgspec.Struct,
+        array_like=True,  # type: ignore[call-arg]
+        omit_defaults=True,  # type: ignore[call-arg]
+        gc=False):  # type: ignore[call-arg]
+    requests: list[EngineCoreRequest]
+
+
 class EngineCoreEventType(enum.IntEnum):
     """The type of engine core request event."""
     QUEUED = 1
@@ -164,3 +172,4 @@ class EngineCoreRequestType(enum.Enum):
     UTILITY = b'\x03'
     # Sentinel used within EngineCoreProc.
     EXECUTOR_FAILED = b'\x04'
+    BATCH_ADD = b'\x99'

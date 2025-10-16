@@ -121,6 +121,9 @@ class AsyncLLM(EngineClient):
             log_stats=self.log_stats,
         )
 
+        self.batch_requests = []
+        self.num_remain_requests = 0
+
         self.output_handler: Optional[asyncio.Task] = None
         try:
             # Start output handler eagerly if we are in the asyncio eventloop.
@@ -216,10 +219,24 @@ class AsyncLLM(EngineClient):
         # Create a new output collector for the request.
         queue = RequestOutputCollector(output_kind=params.output_kind)
 
-        # Convert Input --> Request.
-        prompt_str, request = self.processor.process_inputs(
-            request_id, prompt, params, arrival_time, lora_request,
-            trace_headers, prompt_adapter_request, priority)
+        id_parts = request_id.split("-")
+        if len(id_parts) < 3 or id_parts[-3] != "batch": pass
+        elif int(id_parts[-1]) == 0:
+            self.num_remain_requests += int(id_parts[-2]) - 1
+        else: self.num_remain_requests -= 1
+
+        if not self.batch_requests:
+            # Convert Input --> Request.
+            prompt_str, request = self.processor.process_inputs(
+                request_id, prompt, params, arrival_time, lora_request,
+                trace_headers, prompt_adapter_request, priority)
+        else: 
+            prompt_str, request = None, copy(self.batch_requests[-1])
+            request.request_id = request_id
+            request.sampling_params = params
+            request.prompt_token_ids = prompt["prompt_token_ids"]
+        
+        self.batch_requests.append(request)
 
         if params.n == 1:
             await self._add_request(request, prompt_str, None, 0, queue)
@@ -244,9 +261,13 @@ class AsyncLLM(EngineClient):
         # Add the request to OutputProcessor (this process).
         self.output_processor.add_request(request, prompt, parent_req, index,
                                           queue)
-
-        # Add the EngineCoreRequest to EngineCore (separate process).
-        await self.engine_core.add_request_async(request)
+        
+        if self.num_remain_requests == 0:
+            requests, self.batch_requests = self.batch_requests, []
+            # Add the EngineCoreRequest to EngineCore (separate process).
+            await self.engine_core.add_requests_async(requests)
+        elif self.log_requests: 
+            logger.info("Wait request %s.", request.request_id)
 
         if self.log_requests:
             logger.info("Added request %s.", request.request_id)

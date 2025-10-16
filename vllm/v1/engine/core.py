@@ -28,6 +28,7 @@ from vllm.v1.core.sched.interface import SchedulerInterface
 from vllm.v1.core.sched.output import SchedulerOutput
 from vllm.v1.core.sched.scheduler import Scheduler as V1Scheduler
 from vllm.v1.engine import (EngineCoreOutputs, EngineCoreRequest,
+                            BatchEngineCoreRequest,
                             EngineCoreRequestType, UtilityOutput)
 from vllm.v1.engine.mm_input_cache import MirroredProcessingCache
 from vllm.v1.executor.abstract import Executor
@@ -498,6 +499,7 @@ class EngineCoreProc(EngineCore):
 
         # Msgpack serialization decoding.
         add_request_decoder = MsgpackDecoder(EngineCoreRequest)
+        batch_add_request_decoder = MsgpackDecoder(BatchEngineCoreRequest)
         generic_decoder = MsgpackDecoder()
         identity = engine_index.to_bytes(length=2, byteorder="little")
 
@@ -515,13 +517,22 @@ class EngineCoreProc(EngineCore):
                 request_type = EngineCoreRequestType(bytes(type_frame.buffer))
 
                 # Deserialize the request data.
-                decoder = add_request_decoder if (
-                    request_type
-                    == EngineCoreRequestType.ADD) else generic_decoder
+                if request_type == EngineCoreRequestType.ADD:
+                    decoder = add_request_decoder
+                elif request_type == EngineCoreRequestType.BATCH_ADD:
+                    decoder = batch_add_request_decoder
+                else: decoder = generic_decoder
+
                 request = decoder.decode(data_frames)
 
-                # Push to input queue for core busy loop.
-                self.input_queue.put_nowait((request_type, request))
+                if request_type == EngineCoreRequestType.BATCH_ADD:
+                    for req in request.requests:
+                        # Push to input queue for core busy loop.
+                        self.input_queue.put_nowait(
+                            (EngineCoreRequestType.ADD, req))
+                else:
+                    # Push to input queue for core busy loop.
+                    self.input_queue.put_nowait((request_type, request))
 
     def process_output_socket(self, output_path: str, engine_index: int):
         """Output socket IO thread."""

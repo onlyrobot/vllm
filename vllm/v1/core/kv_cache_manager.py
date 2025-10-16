@@ -68,6 +68,8 @@ class KVCacheManager:
         # data for reempted ones.
         self.num_cached_block: dict[str, int] = {}
 
+        self.cached_computed_blocks: dict[str, tuple] = {}
+
     @property
     def usage(self) -> float:
         """Get the KV cache usage.
@@ -105,6 +107,19 @@ class KVCacheManager:
         if not self.enable_caching:
             # Prefix caching is disabled.
             return [], 0
+
+        id_parts = request.request_id.split("-")
+        if len(id_parts) < 3 or id_parts[-3] != "batch": 
+            beam_search_last_id = None
+        else:
+            id_parts[-1] = id_parts[-2]
+            beam_search_last_id = "-".join(id_parts)
+            if r := self.cached_computed_blocks.get(beam_search_last_id): 
+                if r[3] is None: block_hashes = r[2].copy()
+                else: block_hashes = r[2][:-1] + hash_request_tokens(
+                    self.caching_hash_fn, self.block_size, request, r[3])
+                self.req_to_block_hashes[request.request_id] = block_hashes
+                return r[:2]
 
         # The block hashes for the request may already be computed
         # if the scheduler has tried to schedule the request before.
@@ -159,6 +174,13 @@ class KVCacheManager:
         # sharing, `num_computed_tokens` is always a multiple of
         # `block_size`.
         num_computed_tokens = len(computed_blocks) * self.block_size
+
+        if beam_search_last_id:
+            self.cached_computed_blocks[beam_search_last_id] = (
+                computed_blocks, num_computed_tokens, 
+                block_hashes.copy(), last_block_hash.hash_value 
+                if last_block_hash is not None else None)
+
         return computed_blocks, num_computed_tokens
 
     def allocate_slots(
@@ -383,3 +405,5 @@ class KVCacheManager:
         is finished, not when it is preempted.
         """
         self.req_to_block_hashes.pop(request.request_id, None)
+
+        self.cached_computed_blocks.pop(request.request_id, None)

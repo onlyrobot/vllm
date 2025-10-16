@@ -10,6 +10,7 @@ from collections.abc import Sequence as GenericSequence
 from dataclasses import dataclass, field
 from functools import reduce
 from typing import Any, Callable, Optional, Union
+from vllm.v1.outputs import LogprobsLists
 
 import msgspec
 import torch
@@ -52,7 +53,7 @@ class Logprob:
 # sequence group doesn't require prompt logprob.
 PromptLogprobs = list[Optional[dict[int, Logprob]]]
 # {token_id -> logprob} for each sequence group.
-SampleLogprobs = list[dict[int, Logprob]]
+SampleLogprobs = Union[list[dict[int, Logprob]], LogprobsLists]
 
 
 class SequenceStatus(enum.IntEnum):
