@@ -221,7 +221,7 @@ class AsyncLLM(EngineClient):
 
         id_parts = request_id.split("-")
         if len(id_parts) < 3 or id_parts[-3] != "batch": pass
-        elif int(id_parts[-1]) == 0:
+        elif id_parts[-1] == "0":
             self.num_remain_requests += int(id_parts[-2]) - 1
         else: self.num_remain_requests -= 1
 

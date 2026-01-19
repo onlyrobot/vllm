@@ -112,7 +112,7 @@ class KVCacheManager:
         if len(id_parts) < 3 or id_parts[-3] != "batch": 
             beam_search_last_id = None
         else:
-            id_parts[-1] = id_parts[-2]
+            id_parts[-1] = id_parts[-4]
             beam_search_last_id = "-".join(id_parts)
             if r := self.cached_computed_blocks.get(beam_search_last_id): 
                 if r[3] is None: block_hashes = r[2].copy()

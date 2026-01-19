@@ -71,7 +71,7 @@ class EngineClient(ABC):
         id_parts = request_id.split("-")
         if len(id_parts) < 3 or id_parts[-3] != "batch":
             extral_batch = 1
-        elif int(id_parts[-1]) == 0:
+        elif id_parts[-1] == "0":
             extral_batch = int(id_parts[-2])
         else: extral_batch = 0
 
@@ -126,8 +126,9 @@ class EngineClient(ABC):
             ]
 
             tasks = []
-
-            request_id = f"beam_search-{random_uuid()}"
+            
+            end_index = len(prompts_batch) - 1
+            request_id = f"beam_search-{random_uuid()}-{end_index}"
             beam_batch_size = len(prompts_batch) * extral_batch
             for i, individual_prompt in enumerate(prompts_batch):
                 request_id_item = f"{request_id}-batch-{beam_batch_size}-{i}"
